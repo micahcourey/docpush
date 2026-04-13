@@ -1,0 +1,21 @@
+targets:
+  confluence:
+    type: confluence
+    url: https://my-domain.atlassian.net
+    space: MYSPACE
+    defaults:
+      parentId: "987654321"
+      labels:
+        - feature-doc
+        - auto-synced
+
+pages:
+  docs/features/recipe-search.md:
+    confluence:
+      pageId: "123456789"
+  docs/features/meal-planning.md:
+    confluence:
+      pageId: "123456790"
+  docs/features/grocery-lists.md:
+    confluence:
+      pageId: null

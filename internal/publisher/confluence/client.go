@@ -1,0 +1,271 @@
+package confluence
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+// Client is a Confluence Data Center REST API client.
+type Client struct {
+	baseURL    string
+	pat        string
+	httpClient *http.Client
+}
+
+// NewClient creates a new Confluence REST API client.
+// baseURL should be like "https://your-domain.atlassian.net" or "https://confluence.example.com".
+// pat is a Personal Access Token for authentication.
+func NewClient(baseURL, pat string) *Client {
+	return &Client{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		pat:        pat,
+		httpClient: &http.Client{},
+	}
+}
+
+// PageResponse represents a Confluence page from the REST API.
+type PageResponse struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Version struct {
+		Number int `json:"number"`
+	} `json:"version"`
+	Body struct {
+		Storage struct {
+			Value string `json:"value"`
+		} `json:"storage"`
+	} `json:"body"`
+	Links struct {
+		Base   string `json:"base"`
+		WebUI  string `json:"webui"`
+		TinyUI string `json:"tinyui"`
+	} `json:"_links"`
+}
+
+// SearchResponse represents a Confluence content search result.
+type SearchResponse struct {
+	Results []PageResponse `json:"results"`
+	Size    int            `json:"size"`
+}
+
+// GetPage retrieves a Confluence page by ID with body and version expanded.
+func (c *Client) GetPage(ctx context.Context, pageID string) (*PageResponse, error) {
+	url := fmt.Sprintf("%s/rest/api/content/%s?expand=version,body.storage", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET page %s: status %d: %s", pageID, resp.StatusCode, string(body))
+	}
+
+	var page PageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return &page, nil
+}
+
+// CreatePage creates a new page under the given parent in the given space.
+func (c *Client) CreatePage(ctx context.Context, spaceKey, parentID, title, body string) (*PageResponse, error) {
+	payload := map[string]interface{}{
+		"type":  "page",
+		"title": title,
+		"space": map[string]string{"key": spaceKey},
+		"body": map[string]interface{}{
+			"storage": map[string]string{
+				"value":          body,
+				"representation": "storage",
+			},
+		},
+	}
+	if parentID != "" {
+		payload["ancestors"] = []map[string]string{{"id": parentID}}
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("POST create page: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var page PageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return &page, nil
+}
+
+// UpdatePage updates an existing page. The version number must be incremented.
+func (c *Client) UpdatePage(ctx context.Context, pageID, title, body string, version int) (*PageResponse, error) {
+	payload := map[string]interface{}{
+		"type":  "page",
+		"title": title,
+		"body": map[string]interface{}{
+			"storage": map[string]string{
+				"value":          body,
+				"representation": "storage",
+			},
+		},
+		"version": map[string]int{"number": version},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content/%s", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("PUT update page %s: status %d: %s", pageID, resp.StatusCode, string(respBody))
+	}
+
+	var page PageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return &page, nil
+}
+
+// AddLabels adds labels to a page.
+func (c *Client) AddLabels(ctx context.Context, pageID string, labels []string) error {
+	var payload []map[string]string
+	for _, l := range labels {
+		payload = append(payload, map[string]string{
+			"prefix": "global",
+			"name":   l,
+		})
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling labels: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content/%s/label", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST labels page %s: status %d: %s", pageID, resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// SearchByTitle searches for a page by title within a space.
+func (c *Client) SearchByTitle(ctx context.Context, spaceKey, title string) (*PageResponse, error) {
+	url := fmt.Sprintf("%s/rest/api/content?spaceKey=%s&title=%s&expand=version,body.storage",
+		c.baseURL, spaceKey, title)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET search: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var sr SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	if sr.Size == 0 {
+		return nil, nil
+	}
+	return &sr.Results[0], nil
+}
+
+// Validate checks that the client can reach the Confluence API.
+func (c *Client) Validate(ctx context.Context) error {
+	url := fmt.Sprintf("%s/rest/api/space?limit=1", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reaching Confluence API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("authentication failed (status %d) — check CONFLUENCE_PAT", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (c *Client) setAuth(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.pat)
+}

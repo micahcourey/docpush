@@ -1,0 +1,4 @@
+dist/
+docpush
+*.exe
+.DS_Store

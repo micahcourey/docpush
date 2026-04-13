@@ -1,0 +1,48 @@
+name: Sync Docs to Confluence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**/*.md'
+      - '.docpush.yaml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install docpush
+        run: |
+          LATEST=$(curl -s https://api.github.com/repos/micahcourey/docpush/releases/latest | jq -r .tag_name)
+          curl -sL "https://github.com/micahcourey/docpush/releases/download/${LATEST}/docpush-linux-amd64.zip" -o ds.zip
+          unzip -q ds.zip && chmod +x docpush && mv docpush /usr/local/bin/
+
+      - name: Detect changed docs
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'docs/**/*.md' '.docpush.yaml' | grep '\.md$' || true)
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Sync changed docs to Confluence
+        if: steps.changes.outputs.files != ''
+        env:
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_PAT: ${{ secrets.CONFLUENCE_PAT }}
+        run: |
+          docpush sync \
+            --target confluence \
+            --config .docpush.yaml \
+            --files "${{ steps.changes.outputs.files }}" \
+            --create-if-missing
+
+      - name: Commit pageId updates
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update confluence page mappings [skip ci]"
+          file_pattern: .docpush.yaml
