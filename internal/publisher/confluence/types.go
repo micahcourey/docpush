@@ -10,8 +10,10 @@ type TargetConfig struct {
 
 // DefaultsConfig holds default values for page creation.
 type DefaultsConfig struct {
-	ParentID string   `yaml:"parentId"`
-	Labels   []string `yaml:"labels"`
+	ParentID      string   `yaml:"parentId"`
+	Labels        []string `yaml:"labels"`
+	SourceBaseURL string   `yaml:"sourceBaseUrl"`
+	ReadOnly      bool     `yaml:"readOnly"`
 }
 
 // PageConfig holds per-page Confluence-specific configuration.

@@ -74,8 +74,10 @@ func runSync(dryRun, all, createIfMissing bool, filesFlag string) error {
 			URL:   targetCfg.URL,
 			Space: targetCfg.Space,
 			Defaults: confluence.DefaultsConfig{
-				ParentID: targetCfg.Defaults.ParentID,
-				Labels:   targetCfg.Defaults.Labels,
+				ParentID:      targetCfg.Defaults.ParentID,
+				Labels:        targetCfg.Defaults.Labels,
+				SourceBaseURL: targetCfg.Defaults.SourceBaseURL,
+				ReadOnly:      targetCfg.Defaults.ReadOnly,
 			},
 		})
 	default:

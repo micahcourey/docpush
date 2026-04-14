@@ -269,3 +269,43 @@ func (c *Client) Validate(ctx context.Context) error {
 func (c *Client) setAuth(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.pat)
 }
+
+// SetReadOnly restricts page editing to the authenticated user only.
+// Other users can still view the page but cannot edit it.
+func (c *Client) SetReadOnly(ctx context.Context, pageID string) error {
+	payload := []map[string]interface{}{
+		{
+			"operation": "update",
+			"restrictions": map[string]interface{}{
+				"user": []map[string]string{
+					{"type": "known", "username": "svc_iddoc_github"},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling restrictions: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content/%s/restriction", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PUT restrictions page %s: status %d: %s", pageID, resp.StatusCode, string(body))
+	}
+	return nil
+}

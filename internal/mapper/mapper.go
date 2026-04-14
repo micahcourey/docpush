@@ -24,8 +24,10 @@ type TargetEntry struct {
 
 // DefaultsEntry holds default values for a target.
 type DefaultsEntry struct {
-	ParentID string   `yaml:"parentId"`
-	Labels   []string `yaml:"labels"`
+	ParentID      string   `yaml:"parentId"`
+	Labels        []string `yaml:"labels"`
+	SourceBaseURL string   `yaml:"sourceBaseUrl"`
+	ReadOnly      bool     `yaml:"readOnly"`
 }
 
 // PageOverrides holds per-page, per-target overrides.
