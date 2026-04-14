@@ -31,6 +31,7 @@ func main() {
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(linkCmd())
 	rootCmd.AddCommand(initCmd())
+	rootCmd.AddCommand(scaffoldCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

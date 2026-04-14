@@ -137,3 +137,12 @@ func WritePageID(configPath, filePath, target, pageID string) error {
 	}
 	return os.WriteFile(configPath, data, 0644)
 }
+
+// WriteConfig serializes and writes the full config to the given path.
+func WriteConfig(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}

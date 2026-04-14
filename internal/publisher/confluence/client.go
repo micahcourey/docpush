@@ -270,6 +270,52 @@ func (c *Client) setAuth(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.pat)
 }
 
+// ChildPageResponse represents a paginated list of child pages.
+type ChildPageResponse struct {
+	Results []PageResponse `json:"results"`
+	Size    int            `json:"size"`
+	Links   struct {
+		Next string `json:"next"`
+	} `json:"_links"`
+}
+
+// GetChildPages retrieves all child pages under the given parent page ID.
+// It follows pagination links to collect all results.
+func (c *Client) GetChildPages(ctx context.Context, parentID string) ([]PageResponse, error) {
+	var all []PageResponse
+	path := fmt.Sprintf("/rest/api/content/%s/child/page?limit=50&expand=version", parentID)
+
+	for path != "" {
+		url := c.baseURL + path
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+		c.setAuth(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("executing request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("GET child pages of %s: status %d: %s", parentID, resp.StatusCode, string(body))
+		}
+
+		var cr ChildPageResponse
+		if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+			return nil, fmt.Errorf("decoding response: %w", err)
+		}
+		all = append(all, cr.Results...)
+
+		path = cr.Links.Next
+	}
+
+	return all, nil
+}
+
 // SetReadOnly restricts page editing to the authenticated user only.
 // Other users can still view the page but cannot edit it.
 func (c *Client) SetReadOnly(ctx context.Context, pageID string) error {
