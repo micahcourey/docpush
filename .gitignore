@@ -1,4 +1,4 @@
 dist/
-docpush
+/docpush
 *.exe
 .DS_Store
