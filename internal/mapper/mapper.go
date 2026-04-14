@@ -74,6 +74,13 @@ func GetPageMeta(cfg *Config, filePath, target string, frontmatter map[string]in
 
 	// Layer on frontmatter overrides (highest priority)
 	if frontmatter != nil {
+		// Pull top-level title from frontmatter
+		if t, ok := frontmatter["title"]; ok {
+			if s, ok := t.(string); ok && s != "" {
+				meta["title"] = s
+			}
+		}
+
 		if dp, ok := frontmatter["docpush"]; ok {
 			if dpMap, ok := dp.(map[string]interface{}); ok {
 				if targetFM, ok := dpMap[target]; ok {

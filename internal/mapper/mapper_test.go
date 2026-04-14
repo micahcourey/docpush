@@ -105,6 +105,28 @@ func TestGetPageMeta_FrontmatterOverrides(t *testing.T) {
 	}
 }
 
+func TestGetPageMeta_TopLevelTitle(t *testing.T) {
+	cfg := &Config{
+		Targets: map[string]TargetEntry{
+			"confluence": {Space: "MYSPACE"},
+		},
+	}
+
+	frontmatter := map[string]interface{}{
+		"title": "Data Hub & Storage",
+		"docpush": map[string]interface{}{
+			"confluence": map[string]interface{}{
+				"labels": []string{"feature-doc"},
+			},
+		},
+	}
+
+	meta := GetPageMeta(cfg, "docs/test.md", "confluence", frontmatter)
+	if meta["title"] != "Data Hub & Storage" {
+		t.Errorf("expected title 'Data Hub & Storage', got %v", meta["title"])
+	}
+}
+
 func TestWritePageID(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".docpush.yaml")
