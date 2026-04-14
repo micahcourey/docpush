@@ -2,17 +2,57 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
 
 permissions:
   contents: write
 
 jobs:
+  # On merge to main: extract version from CHANGELOG, create tag if new
+  auto-tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract latest version from CHANGELOG
+        id: version
+        run: |
+          version=$(grep -m1 '^\#\# \[' CHANGELOG.md | sed 's/.*\[\(.*\)\].*/\1/')
+          echo "version=v${version}" >> "$GITHUB_OUTPUT"
+          echo "Detected version: v${version}"
+
+      - name: Create tag if it does not exist
+        id: tag
+        run: |
+          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.version }} already exists — skipping"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "${{ steps.version.outputs.version }}"
+            git push origin "${{ steps.version.outputs.version }}"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Build + release when a new tag is pushed (directly or via auto-tag)
   release:
+    if: >
+      (github.ref_type == 'tag') ||
+      (needs.auto-tag.outputs.created == 'true')
+    needs: [auto-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.auto-tag.outputs.version || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -22,11 +62,12 @@ jobs:
         run: go test ./...
 
       - name: Build release binaries
-        run: make zip
+        run: make VERSION=${{ needs.auto-tag.outputs.version || github.ref_name }} zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.auto-tag.outputs.version || github.ref_name }}
           files: |
             dist/zip/docpush-linux-amd64.zip
             dist/zip/docpush-darwin-amd64.zip
