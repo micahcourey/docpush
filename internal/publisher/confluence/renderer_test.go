@@ -184,3 +184,64 @@ func TestRender_Image_Local(t *testing.T) {
 		t.Errorf("expected attachment macro, got: %s", got)
 	}
 }
+
+func TestRenderWithImages_CollectsLocalPaths(t *testing.T) {
+	src := []byte("![](images/arch.png)\n\nSome text.\n\n![](images/flow.svg)\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	result, err := RenderWithImages(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("RenderWithImages error: %v", err)
+	}
+	if len(result.LocalImages) != 2 {
+		t.Fatalf("expected 2 local images, got %d: %v", len(result.LocalImages), result.LocalImages)
+	}
+	if result.LocalImages[0] != "images/arch.png" {
+		t.Errorf("expected images/arch.png, got %s", result.LocalImages[0])
+	}
+	if result.LocalImages[1] != "images/flow.svg" {
+		t.Errorf("expected images/flow.svg, got %s", result.LocalImages[1])
+	}
+	// XHTML should still contain the attachment macros
+	if !strings.Contains(result.XHTML, `ri:filename="arch.png"`) {
+		t.Errorf("expected arch.png attachment macro in XHTML")
+	}
+}
+
+func TestRenderWithImages_IgnoresExternalImages(t *testing.T) {
+	src := []byte("![](https://example.com/logo.png)\n\n![](images/local.png)\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	result, err := RenderWithImages(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("RenderWithImages error: %v", err)
+	}
+	if len(result.LocalImages) != 1 {
+		t.Fatalf("expected 1 local image, got %d: %v", len(result.LocalImages), result.LocalImages)
+	}
+	if result.LocalImages[0] != "images/local.png" {
+		t.Errorf("expected images/local.png, got %s", result.LocalImages[0])
+	}
+}
+
+func TestRenderWithImages_NoImages(t *testing.T) {
+	src := []byte("# Hello\n\nJust text.\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	result, err := RenderWithImages(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("RenderWithImages error: %v", err)
+	}
+	if len(result.LocalImages) != 0 {
+		t.Errorf("expected 0 local images, got %d", len(result.LocalImages))
+	}
+}

@@ -3,10 +3,15 @@ package confluence
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -354,4 +359,133 @@ func (c *Client) SetReadOnly(ctx context.Context, pageID string) error {
 		return fmt.Errorf("PUT restrictions page %s: status %d: %s", pageID, resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// AttachmentResponse represents a Confluence attachment from the REST API.
+type AttachmentResponse struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Links struct {
+		Download string `json:"download"`
+	} `json:"_links"`
+	Extensions struct {
+		MediaType string `json:"mediaType"`
+		FileSize  int64  `json:"fileSize"`
+		Comment   string `json:"comment"`
+	} `json:"extensions"`
+}
+
+// AttachmentListResponse represents a paginated list of attachments.
+type AttachmentListResponse struct {
+	Results []AttachmentResponse `json:"results"`
+	Size    int                  `json:"size"`
+}
+
+// GetAttachments retrieves all attachments for a page.
+func (c *Client) GetAttachments(ctx context.Context, pageID string) ([]AttachmentResponse, error) {
+	url := fmt.Sprintf("%s/rest/api/content/%s/child/attachment?limit=100", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET attachments for page %s: status %d: %s", pageID, resp.StatusCode, string(body))
+	}
+
+	var result AttachmentListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding attachments: %w", err)
+	}
+	return result.Results, nil
+}
+
+// UploadAttachment uploads a file as an attachment to a Confluence page.
+// If an attachment with the same filename already exists, it updates it.
+// The comment field is used to store a content hash for change detection.
+func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) (*AttachmentResponse, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	// Read file content for hash
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading file %s: %w", filePath, err)
+	}
+	hash := sha256.Sum256(fileBytes)
+	hashStr := "sha256:" + hex.EncodeToString(hash[:])
+
+	// Reset file reader
+	file.Seek(0, io.SeekStart)
+
+	// Build multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("creating form file: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("copying file data: %w", err)
+	}
+
+	// Add comment with hash for change detection
+	if err := writer.WriteField("comment", hashStr); err != nil {
+		return nil, fmt.Errorf("writing comment field: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content/%s/child/attachment", c.baseURL, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-Atlassian-Token", "nocheck")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("PUT attachment to page %s: status %d: %s", pageID, resp.StatusCode, string(respBody))
+	}
+
+	var result AttachmentListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding attachment response: %w", err)
+	}
+	if len(result.Results) == 0 {
+		return nil, fmt.Errorf("no attachment returned after upload")
+	}
+	return &result.Results[0], nil
+}
+
+// FileHash computes the SHA-256 hash of a file and returns it as "sha256:<hex>".
+func FileHash(filePath string) (string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }

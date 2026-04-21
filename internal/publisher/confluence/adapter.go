@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/micahcourey/docpush/internal/converter"
@@ -42,11 +43,12 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 		return nil, fmt.Errorf("parsing markdown for %s: %w", page.LocalPath, err)
 	}
 
-	// Render to Confluence XHTML
-	xhtml, err := Render(doc.Source, doc.Node)
+	// Render to Confluence XHTML and collect local image references
+	renderResult, err := RenderWithImages(doc.Source, doc.Node)
 	if err != nil {
 		return nil, fmt.Errorf("rendering XHTML for %s: %w", page.LocalPath, err)
 	}
+	xhtml := renderResult.XHTML
 
 	if opts.DryRun {
 		return &publisher.Result{
@@ -73,6 +75,9 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 
 		// Skip if content hasn't changed
 		if diff.Equal(existing.Body.Storage.Value, xhtml) {
+			// Still upload any new/changed images even if page content is the same
+			a.uploadImages(ctx, pageID, page.LocalPath, renderResult.LocalImages)
+
 			return &publisher.Result{
 				Action:  "skipped",
 				PageID:  pageID,
@@ -88,6 +93,9 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 		if err != nil {
 			return nil, fmt.Errorf("updating page %s: %w", pageID, err)
 		}
+
+		// Upload local images as attachments
+		a.uploadImages(ctx, pageID, page.LocalPath, renderResult.LocalImages)
 
 		// Apply labels
 		a.applyLabels(ctx, pageID)
@@ -122,6 +130,9 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 	if err != nil {
 		return nil, fmt.Errorf("creating page for %s: %w", page.LocalPath, err)
 	}
+
+	// Upload local images as attachments
+	a.uploadImages(ctx, created.ID, page.LocalPath, renderResult.LocalImages)
 
 	// Apply labels
 	a.applyLabels(ctx, created.ID)
@@ -198,6 +209,64 @@ func (a *Adapter) applyLabels(ctx context.Context, pageID string) {
 func (a *Adapter) applyReadOnly(ctx context.Context, pageID string) {
 	if a.config.Defaults.ReadOnly {
 		_ = a.client.SetReadOnly(ctx, pageID)
+	}
+}
+
+// uploadImages uploads local image files as Confluence attachments.
+// It resolves image paths relative to the markdown file's directory,
+// skips images that already exist with the same content hash, and
+// logs (but does not fail on) individual upload errors.
+func (a *Adapter) uploadImages(ctx context.Context, pageID, localPath string, images []string) {
+	if len(images) == 0 {
+		return
+	}
+
+	// Get base directory of the markdown file for resolving relative paths
+	baseDir := filepath.Dir(localPath)
+
+	// Fetch existing attachments to check for duplicates
+	existing, err := a.client.GetAttachments(ctx, pageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not fetch existing attachments for page %s: %v\n", pageID, err)
+		existing = nil
+	}
+
+	// Build a map of filename → comment (hash) for existing attachments
+	existingHashes := make(map[string]string)
+	for _, att := range existing {
+		existingHashes[att.Title] = att.Extensions.Comment
+	}
+
+	for _, imgPath := range images {
+		// Resolve the image path relative to the markdown file
+		resolvedPath := filepath.Join(baseDir, imgPath)
+		filename := filepath.Base(imgPath)
+
+		// Check if file exists
+		if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warning: image not found: %s (resolved to %s)\n", imgPath, resolvedPath)
+			continue
+		}
+
+		// Compute local file hash
+		localHash, err := FileHash(resolvedPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not hash %s: %v\n", resolvedPath, err)
+			continue
+		}
+
+		// Skip if attachment exists with same hash
+		if remoteHash, ok := existingHashes[filename]; ok && remoteHash == localHash {
+			continue
+		}
+
+		// Upload
+		_, err = a.client.UploadAttachment(ctx, pageID, resolvedPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to upload image %s to page %s: %v\n", filename, pageID, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  uploaded: %s → page %s\n", filename, pageID)
 	}
 }
 

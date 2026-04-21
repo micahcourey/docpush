@@ -12,19 +12,39 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
+// RenderResult holds the rendered XHTML output and any local image paths found.
+type RenderResult struct {
+	XHTML      string
+	LocalImages []string // relative paths to local images (e.g., "images/diagram.png")
+}
+
 // Render converts a goldmark AST to Confluence XHTML storage format.
 func Render(source []byte, node ast.Node) (string, error) {
+	result, err := RenderWithImages(source, node)
+	if err != nil {
+		return "", err
+	}
+	return result.XHTML, nil
+}
+
+// RenderWithImages converts a goldmark AST to Confluence XHTML storage format
+// and also returns a list of local image paths referenced in the document.
+func RenderWithImages(source []byte, node ast.Node) (*RenderResult, error) {
 	var buf bytes.Buffer
 	r := &renderer{source: source, buf: &buf}
 	if err := r.render(node); err != nil {
-		return "", err
+		return nil, err
 	}
-	return buf.String(), nil
+	return &RenderResult{
+		XHTML:      buf.String(),
+		LocalImages: r.localImages,
+	}, nil
 }
 
 type renderer struct {
-	source []byte
-	buf    *bytes.Buffer
+	source      []byte
+	buf         *bytes.Buffer
+	localImages []string
 }
 
 func (r *renderer) render(node ast.Node) error {
@@ -232,6 +252,8 @@ func (r *renderer) renderImage(n *ast.Image, entering bool) error {
 		r.buf.WriteString(`<ac:image>`)
 		fmt.Fprintf(r.buf, `<ri:attachment ri:filename="%s" />`, escapeXML(filename))
 		r.buf.WriteString(`</ac:image>`)
+		// Track local image path for attachment upload
+		r.localImages = append(r.localImages, src)
 	} else {
 		// External images → regular img via Confluence image macro
 		r.buf.WriteString(`<ac:image>`)
