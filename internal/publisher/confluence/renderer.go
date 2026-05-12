@@ -143,6 +143,20 @@ func (r *renderer) renderCodeSpan(_ *ast.CodeSpan, entering bool) error {
 func (r *renderer) renderFencedCodeBlock(n *ast.FencedCodeBlock, entering bool) error {
 	if entering {
 		language := string(n.Language(r.source))
+
+		// Mermaid diagrams → Confluence Mermaid macro (requires Mermaid for Confluence plugin)
+		if language == "mermaid" {
+			r.buf.WriteString(`<ac:structured-macro ac:name="mermaid-cloud">`)
+			r.buf.WriteString(`<ac:plain-text-body><![CDATA[`)
+			lines := n.Lines()
+			for i := 0; i < lines.Len(); i++ {
+				line := lines.At(i)
+				r.buf.Write(line.Value(r.source))
+			}
+			r.buf.WriteString(`]]></ac:plain-text-body></ac:structured-macro>`)
+			return nil
+		}
+
 		r.buf.WriteString(`<ac:structured-macro ac:name="code">`)
 		if language != "" {
 			fmt.Fprintf(r.buf, `<ac:parameter ac:name="language">%s</ac:parameter>`, escapeXML(language))
