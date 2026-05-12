@@ -451,7 +451,7 @@ func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) 
 	}
 
 	url := fmt.Sprintf("%s/rest/api/content/%s/child/attachment", c.baseURL, pageID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

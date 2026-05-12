@@ -142,8 +142,8 @@ func TestClient_GetAttachments(t *testing.T) {
 
 func TestClient_UploadAttachment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("expected PUT, got %s", r.Method)
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
 		}
 		if r.Header.Get("X-Atlassian-Token") != "nocheck" {
 			t.Errorf("expected X-Atlassian-Token: nocheck")
