@@ -61,6 +61,28 @@ func TestRender_FencedCodeBlock(t *testing.T) {
 	}
 }
 
+func TestRender_MermaidCodeBlock(t *testing.T) {
+	src := []byte("```mermaid\nsequenceDiagram\n    A->>B: Hello\n```\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	got, err := Render(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(got, `ac:name="mermaid-cloud"`) {
+		t.Errorf("expected mermaid-cloud macro, got: %s", got)
+	}
+	if strings.Contains(got, `ac:name="code"`) {
+		t.Errorf("mermaid should NOT use code macro, got: %s", got)
+	}
+	if !strings.Contains(got, "sequenceDiagram") {
+		t.Errorf("expected mermaid content, got: %s", got)
+	}
+}
+
 func TestRender_Table(t *testing.T) {
 	src := []byte("| A | B |\n|---|---|\n| 1 | 2 |\n")
 	p := converter.New()
