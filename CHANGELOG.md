@@ -5,6 +5,32 @@ All notable changes to docpush will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-10-16
+
+### Fixed
+
+- Re-uploading an image that already exists on a page now updates the existing attachment (`POST /child/attachment/{id}/data`) instead of creating a new one, which Confluence rejected with `400 Cannot add a new attachment with same file name`. Changed images now reach Confluence, and attachments uploaded before docpush pick up a content hash so later syncs skip them.
+- Attachment upload errors now report the correct HTTP method (`POST`).
+
+## [0.4.1] - 2026-05-12
+
+### Fixed
+
+- Create new attachments with `POST` instead of `PUT`
+
+## [0.4.0] - 2026-05-12
+
+### Added
+
+- Upload local images referenced in Markdown as Confluence attachments, skipping unchanged files by content hash
+- Fenced `mermaid` code blocks render as the Confluence `mermaid-cloud` macro
+
+## [0.3.1] - 2026-04-15
+
+### Fixed
+
+- Source banner wording changed from "auto-generated" to "auto-published"
+
 ## [0.3.0] - 2026-04-14
 
 ### Added

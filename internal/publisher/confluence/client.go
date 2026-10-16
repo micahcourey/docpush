@@ -408,20 +408,18 @@ func (c *Client) GetAttachments(ctx context.Context, pageID string) ([]Attachmen
 	return result.Results, nil
 }
 
-// UploadAttachment uploads a file as an attachment to a Confluence page.
-// If an attachment with the same filename already exists, it updates it.
-// The comment field is used to store a content hash for change detection.
-func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) (*AttachmentResponse, error) {
+// buildAttachmentMultipart creates the multipart form body for an attachment upload.
+func (c *Client) buildAttachmentMultipart(filePath string) (*bytes.Buffer, string, string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("opening file %s: %w", filePath, err)
+		return nil, "", "", fmt.Errorf("opening file %s: %w", filePath, err)
 	}
 	defer file.Close()
 
 	// Read file content for hash
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("reading file %s: %w", filePath, err)
+		return nil, "", "", fmt.Errorf("reading file %s: %w", filePath, err)
 	}
 	hash := sha256.Sum256(fileBytes)
 	hashStr := "sha256:" + hex.EncodeToString(hash[:])
@@ -435,28 +433,39 @@ func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) 
 
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		return nil, fmt.Errorf("creating form file: %w", err)
+		return nil, "", "", fmt.Errorf("creating form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return nil, fmt.Errorf("copying file data: %w", err)
+		return nil, "", "", fmt.Errorf("copying file data: %w", err)
 	}
 
 	// Add comment with hash for change detection
 	if err := writer.WriteField("comment", hashStr); err != nil {
-		return nil, fmt.Errorf("writing comment field: %w", err)
+		return nil, "", "", fmt.Errorf("writing comment field: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("closing multipart writer: %w", err)
+		return nil, "", "", fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	return &buf, writer.FormDataContentType(), hashStr, nil
+}
+
+// UploadAttachment uploads a file as a new attachment to a Confluence page.
+// The comment field is used to store a content hash for change detection.
+func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) (*AttachmentResponse, error) {
+	buf, contentType, _, err := c.buildAttachmentMultipart(filePath)
+	if err != nil {
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/rest/api/content/%s/child/attachment", c.baseURL, pageID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, buf)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	c.setAuth(req)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-Atlassian-Token", "nocheck")
 
 	resp, err := c.httpClient.Do(req)
@@ -467,7 +476,7 @@ func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) 
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("PUT attachment to page %s: status %d: %s", pageID, resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("POST attachment to page %s: status %d: %s", pageID, resp.StatusCode, string(respBody))
 	}
 
 	var result AttachmentListResponse
@@ -478,6 +487,44 @@ func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) 
 		return nil, fmt.Errorf("no attachment returned after upload")
 	}
 	return &result.Results[0], nil
+}
+
+// UpdateAttachmentData updates the data of an existing attachment on a Confluence page.
+func (c *Client) UpdateAttachmentData(ctx context.Context, pageID, attachmentID, filePath string) (*AttachmentResponse, error) {
+	buf, contentType, _, err := c.buildAttachmentMultipart(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/rest/api/content/%s/child/attachment/%s/data", c.baseURL, pageID, attachmentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, buf)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-Atlassian-Token", "nocheck")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("POST attachment data %s to page %s: status %d: %s", attachmentID, pageID, resp.StatusCode, string(respBody))
+	}
+
+	// Unlike create, the update-data endpoint returns a single attachment, not a list
+	var result AttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding attachment response: %w", err)
+	}
+	if result.ID == "" {
+		return nil, fmt.Errorf("no attachment returned after update")
+	}
+	return &result, nil
 }
 
 // FileHash computes the SHA-256 hash of a file and returns it as "sha256:<hex>".

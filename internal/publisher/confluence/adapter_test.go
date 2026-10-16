@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/micahcourey/docpush/internal/publisher"
@@ -132,5 +135,43 @@ func TestAdapter_DryRunRender(t *testing.T) {
 	}
 	if xhtml == "" {
 		t.Fatal("DryRunRender returned empty string")
+	}
+}
+
+func TestAdapter_UploadImages_UpdatesExistingAttachment(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "diagram.png"), []byte("new png data"), 0o644); err != nil {
+		t.Fatalf("writing image: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.png"), []byte("brand new"), 0o644); err != nil {
+		t.Fatalf("writing image: %v", err)
+	}
+
+	var created, updated []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			// diagram.png already exists with a stale hash (e.g. uploaded before docpush)
+			resp := AttachmentListResponse{Results: []AttachmentResponse{{ID: "att-1", Title: "diagram.png"}}, Size: 1}
+			json.NewEncoder(w).Encode(resp)
+		case strings.HasSuffix(r.URL.Path, "/data"):
+			updated = append(updated, r.URL.Path)
+			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-1", Title: "diagram.png"})
+		default:
+			created = append(created, r.URL.Path)
+			json.NewEncoder(w).Encode(AttachmentListResponse{Results: []AttachmentResponse{{ID: "att-2", Title: "new.png"}}, Size: 1})
+		}
+	}))
+	defer srv.Close()
+
+	a := New(TargetConfig{URL: srv.URL, Space: "TEST"})
+	a.client = NewClient(srv.URL, "test-pat")
+	a.uploadImages(context.Background(), "123", filepath.Join(dir, "page.md"), []string{"diagram.png", "new.png"})
+
+	if len(updated) != 1 || updated[0] != "/rest/api/content/123/child/attachment/att-1/data" {
+		t.Errorf("expected existing attachment att-1 to be updated, got %v", updated)
+	}
+	if len(created) != 1 {
+		t.Errorf("expected exactly one new attachment to be created, got %v", created)
 	}
 }

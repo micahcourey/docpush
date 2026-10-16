@@ -207,3 +207,43 @@ func TestFileHash(t *testing.T) {
 		t.Errorf("expected same hash, got %s and %s", hash1, hash2)
 	}
 }
+
+func TestClient_UpdateAttachmentData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/rest/api/content/12345/child/attachment/att-existing/data" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("X-Atlassian-Token") != "nocheck" {
+			t.Errorf("expected X-Atlassian-Token: nocheck")
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parsing multipart form: %v", err)
+		}
+		if !strings.HasPrefix(r.FormValue("comment"), "sha256:") {
+			t.Errorf("expected sha256 hash comment, got %q", r.FormValue("comment"))
+		}
+		// Confluence returns a single attachment object for data updates
+		json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-existing", Title: "diagram.png"})
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp("", "docpush-test-*.png")
+	if err != nil {
+		t.Fatalf("creating temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Write([]byte("updated png data"))
+	tmpFile.Close()
+
+	c := NewClient(srv.URL, "test-pat")
+	att, err := c.UpdateAttachmentData(context.Background(), "12345", "att-existing", tmpFile.Name())
+	if err != nil {
+		t.Fatalf("UpdateAttachmentData error: %v", err)
+	}
+	if att.ID != "att-existing" {
+		t.Errorf("expected att-existing, got %s", att.ID)
+	}
+}

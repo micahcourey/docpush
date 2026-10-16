@@ -233,8 +233,10 @@ func (a *Adapter) uploadImages(ctx context.Context, pageID, localPath string, im
 
 	// Build a map of filename → comment (hash) for existing attachments
 	existingHashes := make(map[string]string)
+	existingIDs := make(map[string]string)
 	for _, att := range existing {
 		existingHashes[att.Title] = att.Extensions.Comment
+		existingIDs[att.Title] = att.ID
 	}
 
 	for _, imgPath := range images {
@@ -260,8 +262,14 @@ func (a *Adapter) uploadImages(ctx context.Context, pageID, localPath string, im
 			continue
 		}
 
-		// Upload
-		_, err = a.client.UploadAttachment(ctx, pageID, resolvedPath)
+		// Upload or update
+		if attachmentID, exists := existingIDs[filename]; exists {
+			// Attachment already exists — update its data
+			_, err = a.client.UpdateAttachmentData(ctx, pageID, attachmentID, resolvedPath)
+		} else {
+			// New attachment — create it
+			_, err = a.client.UploadAttachment(ctx, pageID, resolvedPath)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to upload image %s to page %s: %v\n", filename, pageID, err)
 			continue
