@@ -516,14 +516,15 @@ func (c *Client) UpdateAttachmentData(ctx context.Context, pageID, attachmentID,
 		return nil, fmt.Errorf("POST attachment data %s to page %s: status %d: %s", attachmentID, pageID, resp.StatusCode, string(respBody))
 	}
 
-	var result AttachmentListResponse
+	// Unlike create, the update-data endpoint returns a single attachment, not a list
+	var result AttachmentResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decoding attachment response: %w", err)
 	}
-	if len(result.Results) == 0 {
+	if result.ID == "" {
 		return nil, fmt.Errorf("no attachment returned after update")
 	}
-	return &result.Results[0], nil
+	return &result, nil
 }
 
 // FileHash computes the SHA-256 hash of a file and returns it as "sha256:<hex>".
