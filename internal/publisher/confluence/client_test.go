@@ -75,7 +75,7 @@ func TestClient_UpdatePage(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-pat")
-	page, err := c.UpdatePage(context.Background(), "12345", "Updated", "<p>New</p>", 4)
+	page, err := c.UpdatePage(context.Background(), "12345", "Updated", "<p>New</p>", 4, "")
 	if err != nil {
 		t.Fatalf("UpdatePage error: %v", err)
 	}

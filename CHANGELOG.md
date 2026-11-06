@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - In-page links such as `[Setup](#setup)` now work in Confluence. Each heading gets a Confluence anchor macro with its GitHub-style slug (duplicates get `-1`, `-2`, like GitHub), and `#fragment` links are rendered as `<ac:link ac:anchor>` instead of `<a href="#...">`, which Confluence does not resolve.
+- `sync --all` no longer republishes every page. Confluence rewrites storage XHTML on save, so comparing it with the rendered output almost never matched and every page got a new version and "last updated" date. docpush now records a hash of the rendered page and title in the version message (`Published by docpush from <file> (docpush:sha256:<hash>)`) and skips the page when the hash is unchanged. `status` uses the same check and now includes the source banner. Pages published by older versions are updated once to record the hash.
 
 ## [0.4.2] - 2026-10-16
 
