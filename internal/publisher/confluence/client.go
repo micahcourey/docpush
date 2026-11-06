@@ -39,7 +39,8 @@ type PageResponse struct {
 	Type    string `json:"type"`
 	Title   string `json:"title"`
 	Version struct {
-		Number int `json:"number"`
+		Number  int    `json:"number"`
+		Message string `json:"message"`
 	} `json:"version"`
 	Body struct {
 		Storage struct {
@@ -135,7 +136,8 @@ func (c *Client) CreatePage(ctx context.Context, spaceKey, parentID, title, body
 }
 
 // UpdatePage updates an existing page. The version number must be incremented.
-func (c *Client) UpdatePage(ctx context.Context, pageID, title, body string, version int) (*PageResponse, error) {
+// The message is stored on the new version and shown in the page history.
+func (c *Client) UpdatePage(ctx context.Context, pageID, title, body string, version int, message string) (*PageResponse, error) {
 	payload := map[string]interface{}{
 		"type":  "page",
 		"title": title,
@@ -145,7 +147,7 @@ func (c *Client) UpdatePage(ctx context.Context, pageID, title, body string, ver
 				"representation": "storage",
 			},
 		},
-		"version": map[string]int{"number": version},
+		"version": map[string]interface{}{"number": version, "message": message},
 	}
 
 	data, err := json.Marshal(payload)

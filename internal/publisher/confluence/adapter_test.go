@@ -71,6 +71,73 @@ func TestAdapter_Publish_Update(t *testing.T) {
 	}
 }
 
+func TestAdapter_Publish_SkipsWhenVersionHashMatches(t *testing.T) {
+	var lastMessage string
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			resp := PageResponse{ID: "123", Title: "Test"}
+			resp.Version.Number = 2 + puts
+			resp.Version.Message = lastMessage
+			// Confluence reformats stored XHTML, so the body never matches what docpush sent.
+			resp.Body.Storage.Value = `<h1 class="reformatted">New Content</h1>`
+			json.NewEncoder(w).Encode(resp)
+		case http.MethodPut:
+			puts++
+			var payload struct {
+				Version struct {
+					Message string `json:"message"`
+				} `json:"version"`
+			}
+			json.NewDecoder(r.Body).Decode(&payload)
+			lastMessage = payload.Version.Message
+			resp := PageResponse{ID: "123", Title: "Test"}
+			resp.Version.Number = 2 + puts
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer srv.Close()
+
+	a := New(TargetConfig{URL: srv.URL, Space: "TEST"})
+	a.client = NewClient(srv.URL, "test-pat")
+
+	page := &publisher.Page{
+		LocalPath: "docs/test.md",
+		Title:     "Test",
+		Body:      []byte("# New Content\n\nUpdated.\n"),
+		Metadata:  map[string]any{"pageId": "123"},
+	}
+
+	first, err := a.Publish(context.Background(), page, publisher.PublishOpts{})
+	if err != nil {
+		t.Fatalf("first publish error: %v", err)
+	}
+	if first.Action != "updated" {
+		t.Fatalf("expected first publish to update, got %s", first.Action)
+	}
+	if !strings.Contains(lastMessage, contentHashPrefix) || !strings.Contains(lastMessage, "docs/test.md") {
+		t.Fatalf("expected version message with source path and content hash, got %q", lastMessage)
+	}
+
+	second, err := a.Publish(context.Background(), page, publisher.PublishOpts{})
+	if err != nil {
+		t.Fatalf("second publish error: %v", err)
+	}
+	if second.Action != "skipped" || puts != 1 {
+		t.Errorf("expected unchanged page to be skipped (puts=1), got action %s, puts=%d", second.Action, puts)
+	}
+
+	page.Title = "Renamed"
+	third, err := a.Publish(context.Background(), page, publisher.PublishOpts{})
+	if err != nil {
+		t.Fatalf("third publish error: %v", err)
+	}
+	if third.Action != "updated" {
+		t.Errorf("expected title change to update the page, got %s", third.Action)
+	}
+}
+
 func TestAdapter_Publish_Create(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

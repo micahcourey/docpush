@@ -73,8 +73,13 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 			return nil, fmt.Errorf("fetching existing page %s: %w", pageID, err)
 		}
 
-		// Skip if content hasn't changed
-		if diff.Equal(existing.Body.Storage.Value, xhtml) {
+		// Skip if content hasn't changed. Confluence rewrites storage XHTML on save, so the
+		// body rarely matches byte-for-byte; the hash in the last version message is the reliable check.
+		if title == "" {
+			title = existing.Title
+		}
+		hash := contentHash(title, xhtml)
+		if hasContentHash(existing.Version.Message, hash) || diff.Equal(existing.Body.Storage.Value, xhtml) {
 			// Still upload any new/changed images even if page content is the same
 			a.uploadImages(ctx, pageID, page.LocalPath, renderResult.LocalImages)
 
@@ -86,10 +91,7 @@ func (a *Adapter) Publish(ctx context.Context, page *publisher.Page, opts publis
 			}, nil
 		}
 
-		if title == "" {
-			title = existing.Title
-		}
-		updated, err := a.client.UpdatePage(ctx, pageID, title, xhtml, existing.Version.Number+1)
+		updated, err := a.client.UpdatePage(ctx, pageID, title, xhtml, existing.Version.Number+1, versionMessage(page.LocalPath, hash))
 		if err != nil {
 			return nil, fmt.Errorf("updating page %s: %w", pageID, err)
 		}
@@ -169,12 +171,21 @@ func (a *Adapter) Status(ctx context.Context, page *publisher.Page) (*publisher.
 	if err != nil {
 		return nil, fmt.Errorf("rendering XHTML: %w", err)
 	}
+	xhtml = a.prependSourceBanner(xhtml, page.LocalPath)
+
+	title := page.Title
+	if title == "" {
+		title = getStringMeta(page.Metadata, "title")
+	}
+	if title == "" {
+		title = existing.Title
+	}
 
 	localHash := diff.Hash(xhtml)
 	remoteHash := diff.Hash(existing.Body.Storage.Value)
 
 	state := "in-sync"
-	if localHash != remoteHash {
+	if localHash != remoteHash && !hasContentHash(existing.Version.Message, contentHash(title, xhtml)) {
 		state = "local-ahead"
 	}
 
@@ -290,6 +301,21 @@ func (a *Adapter) prependSourceBanner(xhtml, localPath string) string {
 		`<p>Source: <a href="` + sourceURL + `">` + sourceURL + `</a></p>` +
 		`</ac:rich-text-body></ac:structured-macro>`
 	return banner + xhtml
+}
+
+const contentHashPrefix = "docpush:sha256:"
+
+// contentHash identifies what docpush published, independent of how Confluence reformats it.
+func contentHash(title, xhtml string) string {
+	return diff.Hash(title + "\n" + xhtml)
+}
+
+func hasContentHash(versionMessage, hash string) bool {
+	return strings.Contains(versionMessage, contentHashPrefix+hash)
+}
+
+func versionMessage(localPath, hash string) string {
+	return fmt.Sprintf("Published by docpush from %s (%s%s)", localPath, contentHashPrefix, hash)
 }
 
 func getStringMeta(m map[string]any, key string) string {
