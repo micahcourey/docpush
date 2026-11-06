@@ -4,7 +4,10 @@ package confluence
 import (
 	"bytes"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
+	"unicode"
 
 	east "github.com/yuin/goldmark/extension/ast"
 
@@ -31,7 +34,7 @@ func Render(source []byte, node ast.Node) (string, error) {
 // and also returns a list of local image paths referenced in the document.
 func RenderWithImages(source []byte, node ast.Node) (*RenderResult, error) {
 	var buf bytes.Buffer
-	r := &renderer{source: source, buf: &buf}
+	r := &renderer{source: source, buf: &buf, slugCounts: map[string]int{}}
 	if err := r.render(node); err != nil {
 		return nil, err
 	}
@@ -45,6 +48,7 @@ type renderer struct {
 	source      []byte
 	buf         *bytes.Buffer
 	localImages []string
+	slugCounts  map[string]int
 }
 
 func (r *renderer) render(node ast.Node) error {
@@ -115,6 +119,10 @@ func (r *renderer) render(node ast.Node) error {
 func (r *renderer) renderHeading(n *ast.Heading, entering bool) error {
 	if entering {
 		fmt.Fprintf(r.buf, "<h%d>", n.Level)
+		// Confluence ignores Markdown heading IDs, so add an anchor that #fragment links can target.
+		if slug := r.uniqueSlug(headingSlug(plainText(n, r.source))); slug != "" {
+			fmt.Fprintf(r.buf, `<ac:structured-macro ac:name="anchor"><ac:parameter ac:name="">%s</ac:parameter></ac:structured-macro>`, escapeXML(slug))
+		}
 	} else {
 		fmt.Fprintf(r.buf, "</h%d>", n.Level)
 	}
@@ -238,6 +246,14 @@ func (r *renderer) renderListItem(_ *ast.ListItem, entering bool) error {
 }
 
 func (r *renderer) renderLink(n *ast.Link, entering bool) error {
+	if anchor, ok := inPageAnchor(string(n.Destination)); ok {
+		if entering {
+			fmt.Fprintf(r.buf, `<ac:link ac:anchor="%s"><ac:link-body>`, escapeXML(anchor))
+		} else {
+			r.buf.WriteString("</ac:link-body></ac:link>")
+		}
+		return nil
+	}
 	if entering {
 		fmt.Fprintf(r.buf, `<a href="%s"`, escapeXML(string(n.Destination)))
 		if n.Title != nil {
@@ -406,6 +422,66 @@ func escapeXML(s string) string {
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
+}
+
+// inPageAnchor returns the fragment of a same-page link such as "#my-heading".
+func inPageAnchor(dest string) (string, bool) {
+	if len(dest) < 2 || dest[0] != '#' {
+		return "", false
+	}
+	frag := dest[1:]
+	if decoded, err := url.PathUnescape(frag); err == nil {
+		frag = decoded
+	}
+	return frag, true
+}
+
+// headingSlug builds a GitHub-style heading ID, matching what VS Code and GitHub link to.
+func headingSlug(text string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(strings.TrimSpace(text)) {
+		switch {
+		case unicode.IsLetter(c), unicode.IsDigit(c), c == '-', c == '_':
+			b.WriteRune(c)
+		case unicode.IsSpace(c):
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
+// uniqueSlug suffixes repeated slugs with -1, -2, ... in document order, like GitHub.
+func (r *renderer) uniqueSlug(slug string) string {
+	if slug == "" {
+		return ""
+	}
+	count := r.slugCounts[slug]
+	r.slugCounts[slug] = count + 1
+	if count == 0 {
+		return slug
+	}
+	return slug + "-" + strconv.Itoa(count)
+}
+
+// plainText returns all text under n, including text inside code spans and emphasis.
+func plainText(n ast.Node, source []byte) string {
+	var buf bytes.Buffer
+	_ = ast.Walk(n, func(c ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch t := c.(type) {
+		case *ast.Text:
+			buf.Write(t.Segment.Value(source))
+			if t.SoftLineBreak() {
+				buf.WriteByte(' ')
+			}
+		case *ast.String:
+			buf.Write(t.Value)
+		}
+		return ast.WalkContinue, nil
+	})
+	return buf.String()
 }
 
 func nodeText(n ast.Node, source []byte) string {

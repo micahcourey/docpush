@@ -5,6 +5,12 @@ All notable changes to docpush will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-11-05
+
+### Fixed
+
+- In-page links such as `[Setup](#setup)` now work in Confluence. Each heading gets a Confluence anchor macro with its GitHub-style slug (duplicates get `-1`, `-2`, like GitHub), and `#fragment` links are rendered as `<ac:link ac:anchor>` instead of `<a href="#...">`, which Confluence does not resolve.
+
 ## [0.4.2] - 2026-10-16
 
 ### Fixed

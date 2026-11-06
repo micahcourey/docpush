@@ -18,8 +18,8 @@ func TestRender_Heading(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render error: %v", err)
 	}
-	if !strings.Contains(got, "<h1>Hello World</h1>") {
-		t.Errorf("expected <h1>Hello World</h1>, got: %s", got)
+	if !strings.Contains(got, `<h1><ac:structured-macro ac:name="anchor"><ac:parameter ac:name="">hello-world</ac:parameter></ac:structured-macro>Hello World</h1>`) {
+		t.Errorf("expected <h1> with hello-world anchor, got: %s", got)
 	}
 }
 
@@ -169,6 +169,47 @@ func TestRender_Link(t *testing.T) {
 	}
 	if !strings.Contains(got, `href="https://example.com"`) {
 		t.Errorf("expected link href, got: %s", got)
+	}
+}
+
+func TestRender_HeadingAnchorSlugs(t *testing.T) {
+	src := []byte("## How the `pieces` fit / together\n\n### 4i-ui\n\n### 4i-ui\n\n## Notes\n\n## Notes\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	got, err := Render(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	for _, slug := range []string{"how-the-pieces-fit--together", "4i-ui", "4i-ui-1", "notes", "notes-1"} {
+		want := `<ac:parameter ac:name="">` + slug + `</ac:parameter>`
+		if !strings.Contains(got, want) {
+			t.Errorf("expected anchor %q, got: %s", slug, got)
+		}
+	}
+}
+
+func TestRender_InPageLink(t *testing.T) {
+	src := []byte("| Repo |\n|------|\n| [4i-ui](#4i-ui) |\n\nSee [**pieces**](#how-the-pieces-fit-together).\n")
+	p := converter.New()
+	doc, err := p.Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	got, err := Render(doc.Source, doc.Node)
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(got, `<ac:link ac:anchor="4i-ui"><ac:link-body>4i-ui</ac:link-body></ac:link>`) {
+		t.Errorf("expected ac:link to 4i-ui anchor, got: %s", got)
+	}
+	if !strings.Contains(got, `<ac:link ac:anchor="how-the-pieces-fit-together"><ac:link-body><strong>pieces</strong></ac:link-body></ac:link>`) {
+		t.Errorf("expected ac:link with rich body, got: %s", got)
+	}
+	if strings.Contains(got, `href="#`) {
+		t.Errorf("in-page links should not render as href=#, got: %s", got)
 	}
 }
 
